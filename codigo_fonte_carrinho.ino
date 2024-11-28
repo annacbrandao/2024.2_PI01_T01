@@ -193,13 +193,13 @@ void homeToTarget()
 	}
 
 	// Aggressive homing logic
-	if (currentDistance > HOMING_DISTANCE) {
+	if (currentDistance < HOMING_DISTANCE) {
 		// Target is far, move forward aggressively
 		moveForward();
 		Serial.println("Homing - Moving Forward");
 	} else {
 		// Close to target, fine-tune positioning
-		if (currentDistance < robotControl.targetDistance) {
+		if (currentDistance > robotControl.targetDistance) {
 			rotateClockwise(30); // Slight adjustment
 			Serial.println("Homing - Fine Tuning");
 		} else {
