@@ -188,7 +188,9 @@ void homeToTarget()
 			Serial.println("Lost Track of Target. Searching.");
 			return;
 		}
-	} else {
+	}if(currentDistance < MIN_DISTANCE){
+    Serial.println("Empurra baixo nengue");
+  } else {
 		robotControl.lostTrackCounter = 0;
 	}
 
@@ -196,7 +198,7 @@ void homeToTarget()
 	if (currentDistance < HOMING_DISTANCE) {
 		// Target is far, move forward aggressively
 		moveForward();
-		Serial.println("Homing - Moving Forward");
+		Serial.println("O frank vai pega oce");
 	} else {
 		// Close to target, fine-tune positioning
 		if (currentDistance > robotControl.targetDistance) {
