@@ -149,10 +149,10 @@ void rotateCounterClockwise(int speed = ROTATE_SPEED)
 
 void moveForward(int speed = HOMING_SPEED)
 {
-	digitalWrite(motorLeftForward, HIGH);
-	digitalWrite(motorLeftReverse, LOW);
-	digitalWrite(motorRightForward, HIGH);
-	digitalWrite(motorRightReverse, LOW);
+	digitalWrite(motorLeftForward, LOW);
+	digitalWrite(motorLeftReverse, HIGH);
+	digitalWrite(motorRightForward, LOW);
+	digitalWrite(motorRightReverse, HIGH);
 }
 
 // State-specific behaviors
