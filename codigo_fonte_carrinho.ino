@@ -21,6 +21,7 @@ const int MAX_DISTANCE = 100;  // cm
 const int MIN_DISTANCE = 5;    // cm
 const int HOMING_DISTANCE = 20;  // Distance to start aggressive homing
 const int LOST_TRACK_THRESHOLD = 3;  // Consecutive measurements without target
+const int MAX_SEARCH_SWEEPS = 3;
 
 // Motor and movement parameters
 const int ROTATE_SPEED = 50;
@@ -40,6 +41,7 @@ struct RobotControl {
   int lostTrackCounter = 0;
   int targetDistance = 0;
   int searchDirection = 1;  // 1 for right, -1 for left
+  int searchSweepCount = 0;  // Track number of complete search sweeps
 };
 
 RobotControl robotControl;
@@ -215,9 +217,23 @@ void lostTrackSearch() {
     robotControl.currentState = HOMING;
     robotControl.targetDistance = currentDistance;
     robotControl.searchDirection *= -1;  // Alternate search direction next time
+    robotControl.searchSweepCount = 0;  // Reset sweep count
     
     Serial.println("Target Reacquired. Returning to Homing.");
     return;
+  }
+  
+  // Complete sweep check
+  if (abs(robotControl.searchDirection) == abs(1)) {
+    robotControl.searchSweepCount++;
+    
+    // If maximum sweeps reached, return to acquiring target
+    if (robotControl.searchSweepCount >= MAX_SEARCH_SWEEPS) {
+      robotControl.currentState = ACQUIRING_TARGET;
+      robotControl.searchSweepCount = 0;
+      
+      Serial.println("Target not found after maximum sweeps. Returning to Acquisition.");
+    }
   }
 }
 
