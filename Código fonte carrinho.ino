@@ -1,49 +1,86 @@
-#include <Servo.h>
+#define linhaDir 11
+#define linhaEsq 12
+#define M0 8
+#define M1 9
+#define M2 10
+#define dirPin 4
+#define stepPin 5  //pwm de pulsos pra passo
+#define dirPin1 6
+#define stepPin1 7     //pwm de pulsos pra passo
+#define stepsVolta 200  //1.8 grau por passo
 
-// Motor control pins
-const int motorLeftForward = 47;
-const int motorLeftReverse = 45;
-const int motorRightForward = 49;
-const int motorRightReverse = 44;
+
+
+
 
 // Ultrasonic sensor pins
-const int trigPin = 25;
-const int echoPin = 27;
+const int trigPin = 3;
+const int echoPin = 2;
 
-// Sliding window parameters
-const int WINDOW_SIZE = 10;  // Increased window size for more stable readings
-const int DETECTION_THRESHOLD = 7;  // Require more consecutive detections
-const int MAX_DISTANCE = 50;  // Maximum distance to consider an object detected (cm)
-const int MIN_DISTANCE = 10;  // Minimum distance to avoid false positives (cm)
+int esqDetect, dirDetect = 0;
 
-// Centering parameters
-const int CENTERING_TOLERANCE = 3;  // Acceptable range for centering (cm)
-const int MAX_CENTERING_ATTEMPTS = 5;  // Limit centering attempts to prevent infinite loops
+// Robot states
+enum RobotState { ACQUIRING_TARGET,
+                  HOMING,
+                  LOST_TRACK };
 
-// Sliding window for distance measurements
-int distanceWindow[WINDOW_SIZE] = {0};
-int windowIndex = 0;
+// Detection parameters
+const int WINDOW_SIZE = 15;
+const int MAX_DISTANCE = 100;        // cm
+const int MIN_DISTANCE = 5;          // cm
+const int HOMING_DISTANCE = 20;      // Distance to start aggressive homing
+const int LOST_TRACK_THRESHOLD = 3;  // Consecutive measurements without target
+const int MAX_SEARCH_SWEEPS = 3;
 
-// Tracking object detection and centering
-struct ObjectDetection {
-  bool detected = false;
-  int lastDistance = 0;
-  int centeringAttempts = 0;
-} objectDetection;
+// Motor and movement parameters
+const int ROTATE_SPEED = 50;
+const int HOMING_SPEED = 100;
+const int SEARCH_ANGLE_LEFT = -45;  // Degrees to look left when lost
+const int SEARCH_ANGLE_RIGHT = 45;  // Degrees to look right when lost
+
+// Sliding window and state management
+struct WindowData {
+  int measurements[WINDOW_SIZE];
+  int currentIndex = 0;
+};
+
+struct RobotControl {
+  RobotState currentState = ACQUIRING_TARGET;
+  WindowData distanceWindow;
+  int lostTrackCounter = 0;
+  int targetDistance = 0;
+  int searchDirection = 1;   // 1 for right, -1 for left
+  int searchSweepCount = 0;  // Track number of complete search sweeps
+};
+
+RobotControl robotControl;
 
 void setup() {
   // Motor pin setup
-  pinMode(motorLeftForward, OUTPUT);
-  pinMode(motorLeftReverse, OUTPUT);
-  pinMode(motorRightForward, OUTPUT);
-  pinMode(motorRightReverse, OUTPUT);
+  pinMode(stepPin, OUTPUT);
+  pinMode(dirPin, OUTPUT);
+  pinMode(M0, OUTPUT);
+  pinMode(M1, OUTPUT);
+  pinMode(M2, OUTPUT);
+  pinMode(linhaDir, INPUT_PULLUP);
+  pinMode(linhaEsq, INPUT_PULLUP);
 
   // Ultrasonic sensor pin setup
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
 
-  // Initialize serial communication for debugging
+  // Initialize serial communication
   Serial.begin(9600);
+ 
+  attachInterrupt(linhaDir, detectDir, FALLING);
+  attachInterrupt(linhaEsq, detectEsq, FALLING);
+
+
+  // Initialize window with zeros
+  for (int i = 0; i < WINDOW_SIZE; i++) {
+    robotControl.distanceWindow.measurements[i] = 0;
+  }
+  //delay(5000);  //some daqui meu
 }
 
 // Function to measure distance using ultrasonic sensor
@@ -51,169 +88,243 @@ int measureDistance() {
   // Clear the trigPin
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
-  
+
   // Send a 10 microsecond pulse
   digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
-  
+
   // Measure duration of pulse from echo pin
   long duration = pulseIn(echoPin, HIGH);
-  
+
   // Calculate distance in centimeters
   int distance = duration * 0.034 / 2;
-  
+
   return distance;
 }
 
-// Function to rotate the car clockwise
-void rotateClockwise(int duration = 50) {
-  // Left motor forward
-  digitalWrite(motorLeftForward, HIGH);
-  digitalWrite(motorLeftReverse, LOW);
-  
-  // Right motor reverse
-  digitalWrite(motorRightForward, LOW);
-  digitalWrite(motorRightReverse, HIGH);
-  
-  delay(duration);
+// Add measurement to sliding window
+void addMeasurement(int distance) {
+  robotControl.distanceWindow
+    .measurements[robotControl.distanceWindow.currentIndex] = distance;
+  robotControl.distanceWindow.currentIndex =
+    (robotControl.distanceWindow.currentIndex + 1) % WINDOW_SIZE;
 }
 
-// Function to rotate the car counterclockwise
-void rotateCounterClockwise(int duration = 50) {
-  // Left motor reverse
-  digitalWrite(motorLeftForward, LOW);
-  digitalWrite(motorLeftReverse, HIGH);
-  
-  // Right motor forward
-  digitalWrite(motorRightForward, HIGH);
-  digitalWrite(motorRightReverse, LOW);
-  
-  delay(duration);
-}
+// Calculate median distance from window
+int calculateMedianDistance() {
+  int sortedMeasurements[WINDOW_SIZE];
 
-// Function to stop the car
-void stopMotors() {
-  digitalWrite(motorLeftForward, LOW);
-  digitalWrite(motorLeftReverse, HIGH);
-  digitalWrite(motorRightForward, LOW);
-  digitalWrite(motorRightReverse, HIGH);
-}
-
-// Update sliding window with new distance measurement
-void updateDistanceWindow(int newDistance) {
-  distanceWindow[windowIndex] = newDistance;
-  windowIndex = (windowIndex + 1) % WINDOW_SIZE;
-}
-
-// Check if object is detected using sliding window
-bool isObjectDetected() {
-  int detectionCount = 0;
-  
+  // Copy measurements
   for (int i = 0; i < WINDOW_SIZE; i++) {
-    if (distanceWindow[i] > MIN_DISTANCE && distanceWindow[i] < MAX_DISTANCE) {
-      detectionCount++;
-    }
+    sortedMeasurements[i] =
+      robotControl.distanceWindow.measurements[i];
   }
-  
-  return (detectionCount >= DETECTION_THRESHOLD);
+
+  // Insertion sort
+  for (int i = 1; i < WINDOW_SIZE; i++) {
+    int key = sortedMeasurements[i];
+    int j = i - 1;
+
+    while (j >= 0 && sortedMeasurements[j] > key) {
+      sortedMeasurements[j + 1] = sortedMeasurements[j];
+      j = j - 1;
+    }
+    sortedMeasurements[j + 1] = key;
+  }
+
+  // Return median
+  return sortedMeasurements[WINDOW_SIZE / 2];
 }
 
-// Find the median distance in the sliding window
-int findMedianDistance() {
-  // Create a copy of the window to sort
-  int sortedWindow[WINDOW_SIZE];
-  memcpy(sortedWindow, distanceWindow, sizeof(distanceWindow));
-  
-  // Simple bubble sort
-  for (int i = 0; i < WINDOW_SIZE - 1; i++) {
-    for (int j = 0; j < WINDOW_SIZE - i - 1; j++) {
-      if (sortedWindow[j] > sortedWindow[j + 1]) {
-        int temp = sortedWindow[j];
-        sortedWindow[j] = sortedWindow[j + 1];
-        sortedWindow[j + 1] = temp;
-      }
-    }
-  }
-  
-  // Return median (middle value)
-  return sortedWindow[WINDOW_SIZE / 2];
+// Motor control functions
+void stopMotors() {
+  digitalWrite(dirPin, LOW);  //sentido de giro high ou low
+  digitalWrite(dirPin1, LOW);  //sentido de giro high ou low
 }
 
-// Attempt to center the car on the detected object
-void centerOnObject() {
-  int currentDistance = findMedianDistance();
+void rotateClockwise(int speed = ROTATE_SPEED) {
+  digitalWrite(dirPin, LOW);  //sentido de giro high ou low
+      digitalWrite(dirPin1, HIGH);  //sentido de giro high ou low
+  for (int i = 0; i < stepsVolta; i++) {
+        
+    digitalWrite(stepPin, HIGH);  //gira pra um lado
+        digitalWrite(stepPin1, HIGH);  //gira pra um lado
+    delayMicroseconds(2000);
+
+    digitalWrite(stepPin, LOW);  //gira ao contrario
+    digitalWrite(stepPin1, LOW);  //gira ao contrario
+    delayMicroseconds(2000);
+    //delay(500);
   
-  // Check if we've exceeded max centering attempts
-  if (objectDetection.centeringAttempts >= MAX_CENTERING_ATTEMPTS) {
-    Serial.println("Max centering attempts reached");
-    objectDetection.detected = false;
-    objectDetection.centeringAttempts = 0;
-    return;
   }
+}
+
+void rotateCounterClockwise(int speed = ROTATE_SPEED) {
+  digitalWrite(dirPin, HIGH);  //sentido de giro high ou low
+      digitalWrite(dirPin1, LOW);  //sentido de giro high ou low
+  for (int i = 0; i < stepsVolta; i++) {
+    
+    digitalWrite(stepPin, HIGH);  //gira pra um lado
+        digitalWrite(stepPin1, HIGH);  //gira pra um lado
+    delayMicroseconds(2000);
+
+    digitalWrite(stepPin, LOW);  //gira ao contrario
+     digitalWrite(stepPin1, LOW);  //gira ao contrario
+    delayMicroseconds(2000);
   
-  // Compare current distance with last measured distance
-  int distanceDiff = abs(currentDistance - objectDetection.lastDistance);
-  
-  Serial.print("Centering - Current Distance: ");
-  Serial.print(currentDistance);
-  Serial.print(", Last Distance: ");
-  Serial.print(objectDetection.lastDistance);
-  Serial.print(", Difference: ");
-  Serial.println(distanceDiff);
-  
-  // If within acceptable tolerance, stop
-  if (distanceDiff <= CENTERING_TOLERANCE) {
-    stopMotors();
-    Serial.println("pra frente!");
-    return;
+
   }
+}
+
+void moveForward(int speed = HOMING_SPEED) {
+  digitalWrite(dirPin, HIGH);  //sentido de giro high ou low
+      digitalWrite(dirPin1, HIGH);  //sentido de giro high ou low
+
+  for (int i = 0; i < stepsVolta; i++) {
+    digitalWrite(stepPin, HIGH);  //gira pra um lado
+        digitalWrite(stepPin1, HIGH);  //gira pra um lado
+    delayMicroseconds(2000);
+
+    digitalWrite(stepPin, LOW);  //gira ao contrario
+          digitalWrite(stepPin1, LOW);  //gira ao contrario
+    delayMicroseconds(2000);
+    
   
-  // Rotate based on distance change
-  if (currentDistance < objectDetection.lastDistance) {
-    // Object is closer, rotate slightly counterclockwise
-    rotateCounterClockwise(75);
+  }
+}
+
+// State-specific behaviors
+void acquireTarget() {
+  // Continuously rotate to find target
+  Serial.println("3");
+  rotateClockwise();
+
+  // Check for potential target
+  int medianDistance = calculateMedianDistance();
+  Serial.print("distance: ");
+Serial.println(medianDistance);
+Serial.println("4");
+
+  if (medianDistance > MIN_DISTANCE && medianDistance < MAX_DISTANCE) {
+    // Potential target found
+    robotControl.currentState = HOMING;
+    robotControl.targetDistance = medianDistance;
+
+    Serial.println("Target Acquired. Switching to Homing.");
+  }
+}
+
+void homeToTarget() {
+  int currentDistance = calculateMedianDistance();
+
+  // Check if target is lost
+  if (currentDistance > MAX_DISTANCE || currentDistance < MIN_DISTANCE) {
+    robotControl.lostTrackCounter++;
+
+    if (robotControl.lostTrackCounter >= LOST_TRACK_THRESHOLD) {
+      robotControl.currentState = LOST_TRACK;
+      robotControl.lostTrackCounter = 0;
+
+      Serial.println("Lost Track of Target. Searching.");
+      return;
+    }
+  }
+  if (currentDistance < MIN_DISTANCE) {
+    Serial.println("Empurra baixo nengue");
   } else {
-    // Object is further, rotate slightly clockwise
-    rotateClockwise(75);
+    robotControl.lostTrackCounter = 0;
   }
-  
-  // Update tracking
-  objectDetection.lastDistance = currentDistance;
-  objectDetection.centeringAttempts++;
+
+  // Aggressive homing logic
+  //if (currentDistance < HOMING_DISTANCE || dirDetect == 1) {
+  if (currentDistance < HOMING_DISTANCE) {
+    // Target is far, move forward aggressively
+    moveForward();
+    Serial.println("O frank vai pega oce");
+  } else {
+    // Close to target, fine-tune positioning
+    if (currentDistance > robotControl.targetDistance) {
+      rotateClockwise(30);  // Slight adjustment
+      Serial.println("Homing - Fine Tuning");
+    } else {
+      rotateCounterClockwise(30);  // Slight adjustment
+      Serial.println("Homing - Fine Tuning");
+    }
+  }
+}
+
+void lostTrackSearch() {
+  // Alternate search direction
+  if (robotControl.searchDirection > 0) {
+    // Search right
+    rotateClockwise(ROTATE_SPEED);
+  } else {
+    // Search left
+    rotateCounterClockwise(ROTATE_SPEED);
+  }
+
+  int currentDistance = calculateMedianDistance();
+
+  // Check if target is reacquired
+  if (currentDistance > MIN_DISTANCE && currentDistance < MAX_DISTANCE) {
+    robotControl.currentState = HOMING;
+    robotControl.targetDistance = currentDistance;
+    robotControl.searchDirection *=
+    -1;                               // Alternate search direction next time
+    robotControl.searchSweepCount = 0;  // Reset sweep count
+
+    Serial.println("Target Reacquired. Returning to Homing.");
+    return;
+  }
+
+  // Complete sweep check
+  if (abs(robotControl.searchDirection) == abs(1)) {
+    robotControl.searchSweepCount++;
+
+    // If maximum sweeps reached, return to acquiring target
+    if (robotControl.searchSweepCount >= MAX_SEARCH_SWEEPS) {
+      robotControl.currentState = ACQUIRING_TARGET;
+      robotControl.searchSweepCount = 0;
+
+      Serial.println("Target not found after maximum sweeps. "
+                     "Returning to Acquisition.");
+    }
+  }
+}
+
+void detectEsq() {
+  esqDetect = 1;
+}
+
+void detectDir() {
+  dirDetect = 1;
 }
 
 void loop() {
-  // Measure distance
+  // Measure and add to sliding window
   int distance = measureDistance();
-  
-  // Update sliding window
-  updateDistanceWindow(distance);
-  
-  // Check if object is detected
-  if (isObjectDetected()) {
-    if (!objectDetection.detected) {
-      // First detection, initialize tracking
-      objectDetection.detected = true;
-      objectDetection.lastDistance = findMedianDistance();
-      objectDetection.centeringAttempts = 0;
-      Serial.println("Object First Detected");
-    }
-    
-    // Attempt to center on the object
-    centerOnObject();
-  } else {
-    // Continue searching if no object detected
-    if (objectDetection.detected) {
-      // Reset detection if previously detected
-      objectDetection.detected = false;
-      objectDetection.centeringAttempts = 0;
-    }
-    
-    // Rotate to search
-    rotateClockwise();
+  addMeasurement(distance);
+
+ Serial.println("1");
+
+  // State machine
+  switch (robotControl.currentState) {
+    case ACQUIRING_TARGET:
+    Serial.println("2");
+      acquireTarget();
+      break;
+
+    case HOMING:
+    Serial.println("5");
+      homeToTarget();
+      break;
+
+    case LOST_TRACK:
+    Serial.println("6");
+      lostTrackSearch();
+      break;
   }
-  
-  // Small delay to control processing
-  delay(50);
+
+  delay(50);  // Control processing rate
 }
