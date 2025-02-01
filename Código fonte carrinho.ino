@@ -1,46 +1,45 @@
-#define linhaDir 11
-#define linhaEsq 12
-#define M0 8
-#define M1 9
-#define M2 10
-#define dirPin 4
-#define stepPin 5  //pwm de pulsos pra passo
-#define dirPin1 6
-#define stepPin1 7     //pwm de pulsos pra passo
-#define stepsVolta 200  //1.8 grau por passo
+// Tanque lutador de sumô 
 
+//conexões sensores de linha 
+#define linhaDir 2
+#define linhaEsq 3
 
+//pinos para a ponte h
+#define mot1a 5 //pwm
+#define mot1b 6 //pwm
+#define mot2a 9 //pwm
+#define mot2b 10 //pwm
 
-
-
-// Ultrasonic sensor pins
-const int trigPin = 3;
-const int echoPin = 2;
+// conexões do sensor de distância
+const int trigPin = 11;
+const int echoPin = 12;
 
 int esqDetect, dirDetect = 0;
 
-// Robot states
-enum RobotState { ACQUIRING_TARGET,
-                  HOMING,
-                  LOST_TRACK };
+//Estados do robo
+enum RobotState { 
+ACQUIRING_TARGET,
+HOMING,
+LOST_TRACK 
+};
 
-// Detection parameters
-const int WINDOW_SIZE = 15;
-const int MAX_DISTANCE = 100;        // cm
-const int MIN_DISTANCE = 5;          // cm
-const int HOMING_DISTANCE = 20;      // Distance to start aggressive homing
+// Parâmetros de detecção em centímetros
+const int JANELA = 15;
+const int DISTANCIA_MAX = 1500;        
+const int DISTANCIA_MIN = 5;          // distância de detecção do obstáculo 
+const int HOMING_DISTANCE = 60;      // Distance to start aggressive homing
 const int LOST_TRACK_THRESHOLD = 3;  // Consecutive measurements without target
 const int MAX_SEARCH_SWEEPS = 3;
 
-// Motor and movement parameters
-const int ROTATE_SPEED = 50;
-const int HOMING_SPEED = 100;
-const int SEARCH_ANGLE_LEFT = -45;  // Degrees to look left when lost
-const int SEARCH_ANGLE_RIGHT = 45;  // Degrees to look right when lost
+// Parâmetros de velocidade dos motores 
+const int veloProcura = 120;  //meia potência 
+const int HOMING_SPEED = 120; //meia potência
+const int veloVolta = 127;    //potência normal
+const int veloEmpurra = 255;  //forca máxima 
 
 // Sliding window and state management
 struct WindowData {
-  int measurements[WINDOW_SIZE];
+  int measurements[JANELA];
   int currentIndex = 0;
 };
 
@@ -49,41 +48,52 @@ struct RobotControl {
   WindowData distanceWindow;
   int lostTrackCounter = 0;
   int targetDistance = 0;
-  int searchDirection = 1;   // 1 for right, -1 for left
+  int searchDirection = 1;   // 1 pra direita, -1 pra esquerda
   int searchSweepCount = 0;  // Track number of complete search sweeps
 };
 
 RobotControl robotControl;
 
+
+
+
+
 void setup() {
-  // Motor pin setup
-  pinMode(stepPin, OUTPUT);
-  pinMode(dirPin, OUTPUT);
-  pinMode(M0, OUTPUT);
-  pinMode(M1, OUTPUT);
-  pinMode(M2, OUTPUT);
+
+  //pinos sensor linha
   pinMode(linhaDir, INPUT_PULLUP);
   pinMode(linhaEsq, INPUT_PULLUP);
-
   // Ultrasonic sensor pin setup
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
 
-  // Initialize serial communication
-  Serial.begin(9600);
- 
-  attachInterrupt(linhaDir, detectDir, FALLING);
-  attachInterrupt(linhaEsq, detectEsq, FALLING);
+//MOTORES
+  pinMode(mot1a, OUTPUT);
+ pinMode(mot1b, OUTPUT);
+ pinMode(mot2a, OUTPUT);
+ pinMode(mot2b, OUTPUT);
+
+  //Iniciar serial
+  Serial.begin(115200);
+
+//função para mudar a função quando acha a linha 
+  attachInterrupt(digitalPinToInterrupt(linhaDir), detectDir, FALLING);
+  attachInterrupt(digitalPinToInterrupt(linhaEsq), detectEsq, FALLING);
 
 
-  // Initialize window with zeros
-  for (int i = 0; i < WINDOW_SIZE; i++) {
+  // Inicializar a jenale com zeros
+  for (int i = 0; i < JANELA; i++) {
     robotControl.distanceWindow.measurements[i] = 0;
   }
-  //delay(5000);  //some daqui meu
+
+//tempo pra por o robô no chão 
+  delay(4000);  
 }
 
-// Function to measure distance using ultrasonic sensor
+
+
+
+// Função pra medir a distância 
 int measureDistance() {
   // Clear the trigPin
   digitalWrite(trigPin, LOW);
@@ -99,7 +109,7 @@ int measureDistance() {
 
   // Calculate distance in centimeters
   int distance = duration * 0.034 / 2;
-
+Serial.print(distance);
   return distance;
 }
 
@@ -108,21 +118,21 @@ void addMeasurement(int distance) {
   robotControl.distanceWindow
     .measurements[robotControl.distanceWindow.currentIndex] = distance;
   robotControl.distanceWindow.currentIndex =
-    (robotControl.distanceWindow.currentIndex + 1) % WINDOW_SIZE;
+    (robotControl.distanceWindow.currentIndex + 1) % JANELA;
 }
 
-// Calculate median distance from window
+// Calcular a média das distâncias
 int calculateMedianDistance() {
-  int sortedMeasurements[WINDOW_SIZE];
+  int sortedMeasurements[JANELA];
 
   // Copy measurements
-  for (int i = 0; i < WINDOW_SIZE; i++) {
+  for (int i = 0; i < JANELA; i++) {
     sortedMeasurements[i] =
       robotControl.distanceWindow.measurements[i];
   }
 
   // Insertion sort
-  for (int i = 1; i < WINDOW_SIZE; i++) {
+  for (int i = 1; i < JANELA; i++) {
     int key = sortedMeasurements[i];
     int j = i - 1;
 
@@ -134,79 +144,68 @@ int calculateMedianDistance() {
   }
 
   // Return median
-  return sortedMeasurements[WINDOW_SIZE / 2];
+  return sortedMeasurements[JANELA / 2];
 }
+
 
 // Motor control functions
-void stopMotors() {
-  digitalWrite(dirPin, LOW);  //sentido de giro high ou low
-  digitalWrite(dirPin1, LOW);  //sentido de giro high ou low
+void moveForward() {
+   analogWrite(mot1a, LOW);
+  analogWrite(mot1b, 127);
+ analogWrite(mot2a, LOW);
+ analogWrite(mot2b, 127);
+  Serial.println("pra frente");  //chama a funcao pra andar pra frente no arduino dos motores
+  delay(20);
 }
 
-void rotateClockwise(int speed = ROTATE_SPEED) {
-  digitalWrite(dirPin, LOW);  //sentido de giro high ou low
-      digitalWrite(dirPin1, HIGH);  //sentido de giro high ou low
-  for (int i = 0; i < stepsVolta; i++) {
-        
-    digitalWrite(stepPin, HIGH);  //gira pra um lado
-        digitalWrite(stepPin1, HIGH);  //gira pra um lado
-    delayMicroseconds(2000);
-
-    digitalWrite(stepPin, LOW);  //gira ao contrario
-    digitalWrite(stepPin1, LOW);  //gira ao contrario
-    delayMicroseconds(2000);
-    //delay(500);
-  
-  }
+void empurra() {
+ analogWrite(mot1a, LOW);
+ analogWrite(mot1b, 170);
+ analogWrite(mot2a, LOW);
+ analogWrite(mot2b, 170);
+  Serial.println("sai do meio");  //chama a funcao pra girar a terra ao contrário 
+  delay(20);
 }
 
-void rotateCounterClockwise(int speed = ROTATE_SPEED) {
-  digitalWrite(dirPin, HIGH);  //sentido de giro high ou low
-      digitalWrite(dirPin1, LOW);  //sentido de giro high ou low
-  for (int i = 0; i < stepsVolta; i++) {
-    
-    digitalWrite(stepPin, HIGH);  //gira pra um lado
-        digitalWrite(stepPin1, HIGH);  //gira pra um lado
-    delayMicroseconds(2000);
-
-    digitalWrite(stepPin, LOW);  //gira ao contrario
-     digitalWrite(stepPin1, LOW);  //gira ao contrario
-    delayMicroseconds(2000);
-  
-
-  }
+void rotateClockwise() {
+ analogWrite(mot1a, 120);
+  digitalWrite(mot1b, LOW);
+ digitalWrite(mot2a, LOW);
+ analogWrite(mot2b, 120);
+  Serial.println("peao da casa propia");  //chama a funcao pra andar pra frente no arduino dos motores
+  delay(20);
 }
 
-void moveForward(int speed = HOMING_SPEED) {
-  digitalWrite(dirPin, HIGH);  //sentido de giro high ou low
-      digitalWrite(dirPin1, HIGH);  //sentido de giro high ou low
+void rotateCounterClockwise() {
+ digitalWrite(mot1a, LOW);
+ analogWrite(mot1b, 120);
+ analogWrite(mot2a, 120);
+ digitalWrite(mot2b, LOW);
+  Serial.println("peao inverso");  //chama a funcao pra andar pra frente no arduino dos motores
 
-  for (int i = 0; i < stepsVolta; i++) {
-    digitalWrite(stepPin, HIGH);  //gira pra um lado
-        digitalWrite(stepPin1, HIGH);  //gira pra um lado
-    delayMicroseconds(2000);
+  delay(20);
+}
 
-    digitalWrite(stepPin, LOW);  //gira ao contrario
-          digitalWrite(stepPin1, LOW);  //gira ao contrario
-    delayMicroseconds(2000);
-    
-  
-  }
+void volta() {
+
+   digitalWrite(mot1a, LOW);
+  digitalWrite(mot1b, veloVolta);
+ digitalWrite(mot2a, LOW);
+ digitalWrite(mot2b, veloVolta);
+  Serial.println("volta");
+delay(1000);
+
 }
 
 // State-specific behaviors
 void acquireTarget() {
   // Continuously rotate to find target
-  Serial.println("3");
   rotateClockwise();
-
+//Serial.println("to aqui");
   // Check for potential target
   int medianDistance = calculateMedianDistance();
-  Serial.print("distance: ");
-Serial.println(medianDistance);
-Serial.println("4");
 
-  if (medianDistance > MIN_DISTANCE && medianDistance < MAX_DISTANCE) {
+  if (medianDistance > DISTANCIA_MIN && medianDistance < DISTANCIA_MAX) {
     // Potential target found
     robotControl.currentState = HOMING;
     robotControl.targetDistance = medianDistance;
@@ -219,7 +218,7 @@ void homeToTarget() {
   int currentDistance = calculateMedianDistance();
 
   // Check if target is lost
-  if (currentDistance > MAX_DISTANCE || currentDistance < MIN_DISTANCE) {
+  if (currentDistance > DISTANCIA_MAX ) {
     robotControl.lostTrackCounter++;
 
     if (robotControl.lostTrackCounter >= LOST_TRACK_THRESHOLD) {
@@ -230,48 +229,51 @@ void homeToTarget() {
       return;
     }
   }
-  if (currentDistance < MIN_DISTANCE) {
+  if (currentDistance <= DISTANCIA_MIN) {
+empurra();
+// sobe pra 200 de pwm pra ter mais força
     Serial.println("Empurra baixo nengue");
   } else {
     robotControl.lostTrackCounter = 0;
   }
 
   // Aggressive homing logic
-  //if (currentDistance < HOMING_DISTANCE || dirDetect == 1) {
-  if (currentDistance < HOMING_DISTANCE) {
+  if (currentDistance < HOMING_DISTANCE && currentDistance > DISTANCIA_MIN) {
     // Target is far, move forward aggressively
     moveForward();
     Serial.println("O frank vai pega oce");
-  } else {
-    // Close to target, fine-tune positioning
+  }
+    /* else {
+     //Close to target, fine-tune positioning
     if (currentDistance > robotControl.targetDistance) {
-      rotateClockwise(30);  // Slight adjustment
-      Serial.println("Homing - Fine Tuning");
+      rotateClockwise();  // Slight adjustment
+   Serial.println("Homing - Fine Tuning");
     } else {
-      rotateCounterClockwise(30);  // Slight adjustment
+    rotateCounterClockwise();  // Slight adjustment
       Serial.println("Homing - Fine Tuning");
     }
-  }
+  
+    }*/
 }
 
 void lostTrackSearch() {
   // Alternate search direction
   if (robotControl.searchDirection > 0) {
     // Search right
-    rotateClockwise(ROTATE_SPEED);
+    rotateClockwise();
   } else {
     // Search left
-    rotateCounterClockwise(ROTATE_SPEED);
+    rotateCounterClockwise();
   }
 
   int currentDistance = calculateMedianDistance();
 
   // Check if target is reacquired
-  if (currentDistance > MIN_DISTANCE && currentDistance < MAX_DISTANCE) {
+  if (currentDistance > DISTANCIA_MIN && currentDistance < DISTANCIA_MAX) {
     robotControl.currentState = HOMING;
     robotControl.targetDistance = currentDistance;
     robotControl.searchDirection *=
-    -1;                               // Alternate search direction next time
+      -1;                               // Alternate search direction next time
     robotControl.searchSweepCount = 0;  // Reset sweep count
 
     Serial.println("Target Reacquired. Returning to Homing.");
@@ -295,10 +297,12 @@ void lostTrackSearch() {
 
 void detectEsq() {
   esqDetect = 1;
+volta();
 }
 
 void detectDir() {
   dirDetect = 1;
+volta();
 }
 
 void loop() {
@@ -306,22 +310,17 @@ void loop() {
   int distance = measureDistance();
   addMeasurement(distance);
 
- Serial.println("1");
-
   // State machine
   switch (robotControl.currentState) {
     case ACQUIRING_TARGET:
-    Serial.println("2");
       acquireTarget();
       break;
 
     case HOMING:
-    Serial.println("5");
       homeToTarget();
       break;
 
     case LOST_TRACK:
-    Serial.println("6");
       lostTrackSearch();
       break;
   }
