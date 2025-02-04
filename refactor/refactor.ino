@@ -103,13 +103,6 @@ bool isTargetLost() {
   return false;
 }
 
-// Função para verificar se uma linha foi detectada
-bool isLineDetected() {
-  esqDetect = digitalRead(linhaEsq);
-  dirDetect = digitalRead(linhaDir);
-  return (esqDetect == HIGH || dirDetect == HIGH);
-}
-
 // Função para realizar pequenas varreduras à esquerda e à direita
 void performSearchSweeps() {
   for (int i = 0; i < MAX_SEARCH_SWEEPS; i++) {
@@ -165,13 +158,11 @@ void loop() {
       }
       break;
 
-    case APPROACHING_TARGET:
+      case APPROACHING_TARGET:
       // Move-se em direção ao alvo
       moveForward();
       if (isTargetLost()) {
         currentState = RECOVERING_TARGET;
-      } else if (isLineDetected()) {
-        currentState = AVOIDING_LINE;
       }
       break;
 
