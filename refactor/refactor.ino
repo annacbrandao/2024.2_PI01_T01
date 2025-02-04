@@ -13,7 +13,7 @@ const int trigPin = 11;
 const int echoPin = 12;
 
 // Variáveis para detecção de linha
-int esqDetect, dirDetect = 0;
+volatile bool lineDetectedFlag = false;
 
 // Estados do robô
 enum RobotState {
@@ -120,6 +120,10 @@ void performSearchSweeps() {
   }
 }
 
+void handleLineDetection() {
+  lineDetectedFlag = true;
+}
+
 void setup() {
   // Configuração dos pinos
   pinMode(linhaDir, INPUT);
@@ -131,12 +135,21 @@ void setup() {
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
 
+  // Configuração das interrupções
+  attachInterrupt(digitalPinToInterrupt(linhaDir), handleLineDetection, RISING);
+  attachInterrupt(digitalPinToInterrupt(linhaEsq), handleLineDetection, RISING);
+
   // Inicialização
   Serial.begin(9600);
   stopMotors();
 }
 
 void loop() {
+  if (lineDetectedFlag) {
+    lineDetectedFlag = false;
+    currentState = AVOIDING_LINE;
+  }
+
   // Máquina de estados
   switch (currentState) {
     case IDLE:
