@@ -43,9 +43,9 @@ unsigned long lastDetectionTime = 0;
 // Funções de movimento
 void moveForward() {
     digitalWrite(mot1a, LOW);
-    analogWrite(mot1b, 130);
+    analogWrite(mot1b, 255);
     digitalWrite(mot2a, LOW);
-    analogWrite(mot2b, 130);
+    analogWrite(mot2b, 255);
 }
 
 void moveBackward() {
